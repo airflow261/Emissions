@@ -1,0 +1,230 @@
+// Initialize the map
+Map.setCenter(54.3773, 24.4539, 10);  // Set the initial center of the map
+
+// Create drawing tools and enable polygon drawing mode
+var drawingTools = Map.drawingTools();
+drawingTools.setShown(false); // Initially hidden
+
+// Clear any existing geometries
+drawingTools.layers().forEach(function(layer) {
+  layer.setShown(false);
+});
+
+// Set the drawing mode to polygon
+drawingTools.setShape('polygon');
+
+// Create the parameter drop-down menu
+var parameterSelect = ui.Select({
+  items: [
+    {label: 'Carbon Monoxide (CO)', value: 'COPERNICUS/S5P/OFFL/L3_CO'},
+    {label: 'Methane (CH4)', value: 'COPERNICUS/S5P/OFFL/L3_CH4'},
+    {label: 'Nitrogen Dioxide (NO2)', value: 'COPERNICUS/S5P/OFFL/L3_NO2'},
+    {label: 'Ozone (O3)', value: 'COPERNICUS/S5P/OFFL/L3_O3_TCL'},
+    {label: 'Sulfur Dioxide (SO2)', value: 'COPERNICUS/S5P/OFFL/L3_SO2'},
+    {label: 'Formaldehyde (HCHO)', value: 'COPERNICUS/S5P/OFFL/L3_HCHO'}
+  ],
+  value: 'COPERNICUS/S5P/OFFL/L3_CO',
+  onChange: onParameterChange
+});
+
+// Function to create a chart and map layer once the polygon is drawn
+function onDrawComplete() {
+  // Get the drawn polygon
+  var layers = drawingTools.layers().get(0);
+  if (!layers) {
+    ui.alert('Error', 'No region of interest drawn. Please draw a region of interest.', true);
+    return;
+  }
+  var polygon = layers.getEeObject();
+  
+  // Get the selected date range
+  var startDate = startDateBox.getValue();
+  var endDate = endDateBox.getValue();
+  
+  // Get the selected parameter
+  var selectedParameter = parameterSelect.getValue();
+  var bandName, min, max, palette, title;
+  
+  switch (selectedParameter) {
+    case 'COPERNICUS/S5P/OFFL/L3_CO':
+      bandName = 'CO_column_number_density';
+      min = 0;
+      max = 0.05;
+      palette = ['green', 'yellow', 'red'];
+      title = 'Mean CO Column Number Density (mol/m²)';
+      break;
+    case 'COPERNICUS/S5P/OFFL/L3_CH4':
+      bandName = 'CH4_column_volume_mixing_ratio_dry_air';
+      min = 1750;
+      max = 1900;
+      palette = ['blue', 'purple', 'red'];
+      title = 'Mean CH4 Column Volume Mixing Ratio (ppb)';
+      break;
+    case 'COPERNICUS/S5P/OFFL/L3_NO2':
+      bandName = 'NO2_column_number_density';
+      min = 0;
+      max = 0.0002;
+      palette = ['green', 'yellow', 'red'];
+      title = 'Mean NO2 Column Number Density (mol/m²)';
+      break;
+    case 'COPERNICUS/S5P/OFFL/L3_O3_TCL':
+      bandName = 'O3_column_number_density';
+      min = 0;
+      max = 0.15;
+      palette = ['green', 'yellow', 'red'];
+      title = 'Mean O3 Column Number Density (mol/m²)';
+      break;
+    case 'COPERNICUS/S5P/OFFL/L3_SO2':
+      bandName = 'SO2_column_number_density';
+      min = 0;
+      max = 0.0005;
+      palette = ['green', 'yellow', 'red'];
+      title = 'Mean SO2 Column Number Density (mol/m²)';
+      break;
+    case 'COPERNICUS/S5P/OFFL/L3_HCHO':
+      bandName = 'tropospheric_HCHO_column_number_density';
+      min = 0;
+      max = 0.00003;
+      palette = ['green', 'yellow', 'red'];
+      title = 'Mean HCHO Column Number Density (mol/m²)';
+      break;
+  }
+  
+  // Load the dataset
+  var collection = ee.ImageCollection(selectedParameter)
+                    .select(bandName)
+                    .filterDate(startDate, endDate)
+                    .filterBounds(polygon);
+
+  // Calculate the mean column number density over the specified time period
+  var meanImage = collection.mean().clip(polygon);
+
+  // Display the mean data on the map
+  Map.centerObject(polygon, 6);
+  Map.addLayer(meanImage, {min: min, max: max, palette: palette}, title);
+
+  // Create a time series chart for the selected parameter
+  var chart = ui.Chart.image.seriesByRegion({
+    imageCollection: collection,
+    regions: polygon,
+    reducer: ee.Reducer.mean(),
+    band: bandName,
+    scale: 10000,
+    xProperty: 'system:time_start',
+    seriesProperty: 'label'
+  })
+  .setOptions({
+    title: 'Time Series of ' + title,
+    vAxis: {title: title},
+    hAxis: {title: 'Date'},
+    lineWidth: 2,
+    pointSize: 3
+  });
+  print(chart);
+
+  // Create a legend for the color bar
+  var legend = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px'
+    }
+  });
+
+  var legendTitle = ui.Label({
+    value: title,
+    style: {
+      fontWeight: 'bold',
+      fontSize: '14px',
+      margin: '0 0 4px 0',
+      padding: '0'
+    }
+  });
+
+  var lon = ee.Image.pixelLonLat().select('latitude');
+  var gradient = lon.multiply((max - min) / 100.0).add(min);
+  var legendImage = gradient.visualize({min: min, max: max, palette: palette});
+
+  var thumbnail = ui.Thumbnail({
+    image: legendImage,
+    params: {bbox: [0, 0, 1, 0.1], dimensions: '300x10'},
+    style: {stretch: 'horizontal', margin: '0 8px', maxHeight: '24px'}
+  });
+
+  var legendLabels = ui.Panel({
+    widgets: [
+      ui.Label(min, {margin: '4px 8px'}),
+      ui.Label((min + max) / 2, {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+      ui.Label(max, {margin: '4px 8px'})
+    ],
+    layout: ui.Panel.Layout.flow('horizontal')
+  });
+
+  legend.add(legendTitle).add(thumbnail).add(legendLabels);
+  Map.add(legend);
+}
+
+// Function to clear the map
+function clearMap() {
+  Map.clear();
+  drawingTools.layers().forEach(function(layer) {
+    drawingTools.layers().remove(layer);
+  });
+}
+
+// Function to update the map and chart when the parameter changes
+function onParameterChange() {
+  clearMap();
+  drawingTools.setShown(true);
+}
+
+// Create the UI elements
+var panel = ui.Panel({
+  style: {
+    width: '300px',
+    position: 'top-right'
+  }
+});
+
+var title = ui.Label({
+  value: 'Greenhouse Gas Emissions Analysis',
+  style: {fontSize: '20px', fontWeight: 'bold'}
+});
+
+var startDateLabel = ui.Label('Select start date:');
+var startDateBox = ui.Textbox({value: '2023-01-01', style: {width: '100px'}});
+
+var endDateLabel = ui.Label('Select end date:');
+var endDateBox = ui.Textbox({value: '2023-01-31', style: {width: '100px'}});
+
+var drawButton = ui.Button({
+  label: 'Draw ROI',
+  onClick: function() {
+    drawingTools.setShown(true);
+    drawingTools.draw();
+  }
+});
+
+var runButton = ui.Button({
+  label: 'Run',
+  onClick: onDrawComplete
+});
+
+var clearButton = ui.Button({
+  label: 'Clear Map',
+  onClick: clearMap
+});
+
+// Add UI elements to the panel
+panel.add(title);
+panel.add(startDateLabel);
+panel.add(startDateBox);
+panel.add(endDateLabel);
+panel.add(endDateBox);
+panel.add(ui.Label('Select parameter:'));
+panel.add(parameterSelect);
+panel.add(drawButton);
+panel.add(runButton);
+panel.add(clearButton);
+
+// Add the panel to the map
+ui.root.add(panel);
